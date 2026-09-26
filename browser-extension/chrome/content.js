@@ -456,7 +456,7 @@
         : `m3u8-${detectedTargets.length + 1}.m3u8`;
       addDetectedTarget({
         url: normalizedUrl,
-        fileName: getFileName(rawUrl, fallback),
+        fileName: getCurrentTitleFromUrl(normalizedUrl) || getFileName(rawUrl, fallback),
         fileType: type,
         thumbnail: resolveThumbnailFor(rawUrl) || null,
         isLive: isFlvLiveUrl(rawUrl)
