@@ -29,14 +29,18 @@
   let lastPageSignature = getPageSignature();
   let endedVideoRef = null;
 
-  bindDetectionListener();
+  // bindDetectionListener();
   injectSiteHooks();
-  bindRuntimeListener();
-  syncPendingDetections();
+  // bindRuntimeListener();
+  // syncPendingDetections();
   waitForDomReady(() => {
-    scanVideos();
-    window.setInterval(scanVideos, 3000);
-    bindAutoRefreshWatcher();
+    //scanVideos();
+    window.setInterval(() => {
+      bindDetectionListener();
+      bindRuntimeListener();
+      syncPendingDetections();
+    }, 3000);
+    //bindAutoRefreshWatcher();
   });
 
   // Watch for "next episode" navigation: when the page URL changes (SPA pushState)
