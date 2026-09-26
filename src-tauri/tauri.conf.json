@@ -31,7 +31,8 @@
     "active": true,
     "resources": {
       "../browser-extension/chrome/": "chrome-extension/",
-      "../browser-extension/firefox/": "firefox-extension/"
+      "../browser-extension/firefox/": "firefox-extension/",
+      "resources/WebView2Loader.dll": "WebView2Loader.dll"
     },
     "icon": [
       "icons/icon.png"
