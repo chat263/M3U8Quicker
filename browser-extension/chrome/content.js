@@ -583,6 +583,15 @@
     return name || fallback || "video.m3u8";
   }
 
+  // 从目标 URL 上携带的 title 参数取页面标题，并清洗成合法文件名；取不到则回退到 document.title。
+  function deriveFileNameForUrl(url) {
+    const rawTitle = getCurrentTitleFromUrl(url) || getPageTitle();
+    if (!rawTitle || !rawTitle.trim()) {
+      return "";
+    }
+    return sanitizeFilename(rawTitle, "");
+  }
+
   function sanitizeFilename(name, fallback) {
     const cleaned = String(name || "")
       .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
@@ -1047,6 +1056,10 @@
     const params = new URLSearchParams({
       url: target,
     });
+    const fileName = deriveFileNameForUrl(target);
+    if (fileName) {
+      params.set("filename", fileName);
+    }
     if (fileType && fileType !== "hls") {
       params.set("file_type", fileType);
     }
@@ -1088,6 +1101,10 @@
     const params = new URLSearchParams({
       url: target,
     });
+    const fileName = deriveFileNameForUrl(target);
+    if (fileName) {
+      params.set("filename", fileName);
+    }
     const extraHeaders = buildExtraHeaders();
     if (extraHeaders) {
       params.set("extra_headers", extraHeaders);
@@ -1100,9 +1117,19 @@
       return;
     }
 
+    const filenames = items.map((item) => {
+      const title =
+        (typeof item.batchTitle === "string" && item.batchTitle.trim()) ||
+        deriveFileNameForUrl(item.batchUrl || item.url) ||
+        "";
+      return title;
+    });
     const params = new URLSearchParams({
       items: items.map((item) => item.batchUrl || item.url).join("\n")
     });
+    if (filenames.join("\n").trim()) {
+      params.set("filenames", filenames.join("\n"));
+    }
     const fileTypes = items.map((item) => item.fileType || "").join("\n");
     if (fileTypes.trim()) {
       params.set("file_types", fileTypes);

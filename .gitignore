@@ -21,6 +21,9 @@ test-hls-server/tmp
 test-hls-server/.DS_Store
 test-hls-server/**/.DS_Store
 
+# Local NSIS tooling
+tools/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
