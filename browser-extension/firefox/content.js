@@ -26,6 +26,8 @@
   const videoThumbnailMap = new Map();
   let buttonPosition = { top: 20, right: 20 };
   let uiRoot = null;
+  let lastPageSignature = getPageSignature();
+  let endedVideoRef = null;
 
   bindDetectionListener();
   injectSiteHooks();
@@ -34,7 +36,66 @@
   waitForDomReady(() => {
     scanVideos();
     window.setInterval(scanVideos, 3000);
+    bindAutoRefreshWatcher();
   });
+
+  // Watch for "next episode" navigation: when the page URL changes (SPA pushState)
+  // or the current video ends, clear stale detected targets so the site hooks and
+  // DOM scan re-register the new video's manifest. This makes the download panel
+  // follow auto-play / next-episode behavior instead of accumulating old links.
+  function bindAutoRefreshWatcher() {
+    if (!isTopLevelContext) {
+      return;
+    }
+    window.setInterval(() => {
+      const signature = getPageSignature();
+      if (signature !== lastPageSignature) {
+        lastPageSignature = signature;
+        handleVideoContextChange();
+        return;
+      }
+      const activeVideo = findActiveVideo();
+      if (activeVideo && activeVideo === endedVideoRef) {
+        return;
+      }
+      if (activeVideo && activeVideo.ended) {
+        endedVideoRef = activeVideo;
+        handleVideoContextChange();
+      } else {
+        endedVideoRef = activeVideo;
+      }
+    }, 1000);
+  }
+
+  function getPageSignature() {
+    try {
+      return location.pathname + location.search;
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function findActiveVideo() {
+    const videos = document.querySelectorAll("video");
+    for (let i = 0; i < videos.length; i += 1) {
+      const video = videos[i];
+      if (!video.paused && video.currentTime > 0) {
+        return video;
+      }
+    }
+    return videos.length > 0 ? videos[0] : null;
+  }
+
+  function handleVideoContextChange() {
+    if (!isTopLevelContext || detectedTargets.length === 0) {
+      return;
+    }
+    clearDetectedTargets();
+    checkedTargets.clear();
+    videoThumbnailMap.clear();
+    updateButtonVisibility(false);
+    scanVideos();
+  }
 
   function injectSiteHooks() {
     if (!isTopLevelContext) {
