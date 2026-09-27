@@ -34,12 +34,12 @@
   // bindRuntimeListener();
   // syncPendingDetections();
   waitForDomReady(() => {
-    scanVideos();
-    window.setInterval(() => {
-      // bindDetectionListener();
-      // bindRuntimeListener();
-      // syncPendingDetections();
-      scanVideos();
+    // scanVideos();
+    window.setTimeout(() => {
+      bindDetectionListener();
+      bindRuntimeListener();
+      syncPendingDetections();
+    //   scanVideos();
     }, 3000);
     //bindAutoRefreshWatcher();
   });
@@ -744,6 +744,7 @@
     if (panel) {
       panel.remove();
     }
+    scanVideos();
   }
 
   function refreshOpenPanel() {
