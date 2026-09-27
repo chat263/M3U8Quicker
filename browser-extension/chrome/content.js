@@ -34,13 +34,14 @@
   // bindRuntimeListener();
   // syncPendingDetections();
   waitForDomReady(() => {
-    // scanVideos();
+    scanVideos();
     window.setInterval(() => {
-      bindDetectionListener();
-      bindRuntimeListener();
-      syncPendingDetections();
+      // bindDetectionListener();
+      // bindRuntimeListener();
+      // syncPendingDetections();
+      scanVideos();
     }, 3000);
-    // bindAutoRefreshWatcher();
+    //bindAutoRefreshWatcher();
   });
 
   // Watch for "next episode" navigation: when the page URL changes (SPA pushState)
@@ -171,8 +172,8 @@
     const videos = document.getElementsByTagName("video");
     for (let i = 0; i < videos.length; i += 1) {
       const video = videos[i];
-      const currentSrc = video.currentSrc || video.src || "";
-      if (!isSupportedMediaUrl(currentSrc) || checkedTargets.has(currentSrc)) {
+      const currentSrc = getVideoSourceUrl(video);
+      if (!currentSrc || !isSupportedMediaUrl(currentSrc) || checkedTargets.has(currentSrc)) {
         continue;
       }
 
@@ -183,6 +184,18 @@
       reportDetection(currentSrc);
     }
     backfillThumbnails();
+  }
+
+  function getVideoSourceUrl(video) {
+    if (!video) {
+      return "";
+    }
+    const sources = video.getElementsByTagName("source");
+    const source = sources.length > 0 ? sources[0] : null;
+    if (source && source.src) {
+      return source.src;
+    }
+    return video.currentSrc || video.src || "";
   }
 
   function collectVideoThumbnail(video) {
@@ -726,6 +739,7 @@
 
   function clearDetectedTargets() {
     detectedTargets.splice(0, detectedTargets.length);
+    checkedTargets.clear();
     const panel = getUiElement(PANEL_ID);
     if (panel) {
       panel.remove();
