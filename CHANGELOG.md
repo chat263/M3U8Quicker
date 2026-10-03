@@ -1,4 +1,13 @@
 # Changelog
+
+## 1.2.9
+
+- 修复 MP4 等直链视频下载中断后，自动重试重新创建带编号文件并遗留 `.partial` 临时文件的问题；重试复用本次下载的文件路径，并在服务器支持时从已下载位置继续。
+
+**English**
+
+- Fixed automatic retries for MP4 and other direct video downloads creating numbered files and leaving abandoned `.partial` files after an interruption. Retries now reuse the current download's file paths and resume from the downloaded offset when supported by the server.
+
 ## 1.2.11
 - 浏览器扩展：启用定时 DOM 扫描替代事件监听，支持 <source> 标签视频源检测并重置已检查记录
 - 浏览器扩展：移除 setInterval 轮询，改为 setTimeout 一次性启用事件监听与同步，优化扫描逻辑
@@ -12,9 +21,16 @@
 - 浏览器扩展：检测"自动播放下一集 / 切换页面"时清空旧下载链接并重新注册新视频，面板不再累积上一集的过期链接
 
 ## 1.2.8
-- 更新红点通知开关
+
+- 新增桌面应用多语言支持：简体中文、繁体中文、英语、日语、韩语、西班牙语、法语、德语、葡萄牙语（巴西）和俄语，首次启动自动匹配系统语言。浏览器扩展支持中/英切换
 - 视频预览增加展示：帧率/分辨率/编码格式
 - 下载完成视频增加右键分析视频
+
+**English**
+
+- Added desktop language support for Simplified Chinese, Traditional Chinese, English, Japanese, Korean, Spanish, French, German, Portuguese (Brazil), and Russian. The application automatically matches the system language on first launch. The browser extension supports switching between Chinese and English.
+- Video previews now display frame rate, resolution, and codec information.
+- Added a video analysis option to the context menu for completed downloads.
 
 ## 1.2.7
 - 浏览器扩展：优化抖音、bilibili下载视频可选不同清晰度
