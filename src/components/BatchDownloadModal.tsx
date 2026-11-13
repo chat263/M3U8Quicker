@@ -8,6 +8,7 @@ import {
   Modal,
   Select,
   Space,
+  Switch,
   Table,
   Typography,
   message,
@@ -46,7 +47,11 @@ interface BatchDownloadModalProps {
   initialRawInput?: string;
   initialExtraHeaders?: string;
   initialFileTypes?: Array<FileType | undefined>;
+<<<<<<< HEAD
   initialFilenames?: Array<string>;
+=======
+  initialFilenames?: Array<string | undefined>;
+>>>>>>> chat263/M3U8Quicker/master
   resetKey?: number;
   onClose: () => void;
   onOpenFfmpegSettings: () => void;
@@ -85,6 +90,7 @@ export function BatchDownloadModal({
   const [rawInput, setRawInput] = useState("");
   const [extraHeaders, setExtraHeaders] = useState("");
   const [outputDir, setOutputDir] = useState("");
+  const [directParallel, setDirectParallel] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [previewingKey, setPreviewingKey] = useState<string | null>(null);
   const [parsedItems, setParsedItems] = useState<ParsedBatchItem[]>([]);
@@ -96,6 +102,7 @@ export function BatchDownloadModal({
     }
 
     void getDefaultDownloadDir().then(setOutputDir);
+    setDirectParallel(false);
     setRawInput(initialRawInput || "");
     setExtraHeaders(initialExtraHeaders || "");
     const nextItems = parseBatchInput(
@@ -106,6 +113,7 @@ export function BatchDownloadModal({
     );
     setParsedItems(nextItems);
     setSelectedRowKeys(nextItems.map((item) => item.key));
+<<<<<<< HEAD
   }, [
     initialExtraHeaders,
     initialFileTypes,
@@ -114,6 +122,9 @@ export function BatchDownloadModal({
     open,
     resetKey,
   ]);
+=======
+  }, [initialExtraHeaders, initialFileTypes, initialFilenames, initialRawInput, open, resetKey]);
+>>>>>>> chat263/M3U8Quicker/master
 
   useEffect(() => {
     const nextItems = parseBatchInput(rawInput, initialFileTypes, initialRawInput, initialFilenames);
@@ -281,6 +292,7 @@ export function BatchDownloadModal({
           output_dir: outputDir || undefined,
           extra_headers: extraHeaders.trim() || undefined,
           download_mode: item.mode,
+          direct_parallel: item.mode === "direct" && directParallel,
           file_type: item.fileType,
           source_kind: item.sourceKind,
           source_text: item.sourceText,
@@ -354,6 +366,15 @@ export function BatchDownloadModal({
           />
         ) : null}
 
+        {parsedItems.some((item) => item.mode === "direct") && (
+          <div>
+            <Space><Typography.Text>Direct · {t("directParallelDownload")}</Typography.Text>
+              <Switch checked={directParallel} onChange={setDirectParallel} /></Space>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              {t("directParallelDownloadHint")}
+            </Typography.Paragraph>
+          </div>
+        )}
         <div>
           <Typography.Text strong>{t("parsedResults")}</Typography.Text>
           <div style={{ marginTop: 10 }}>
@@ -552,7 +573,11 @@ function parseBatchInput(
   rawInput: string,
   initialFileTypes?: Array<FileType | undefined>,
   initialRawInput?: string,
+<<<<<<< HEAD
   initialFilenames?: Array<string>
+=======
+  initialFilenames?: Array<string | undefined>
+  initialFilenames?: Array<string | undefined>;
 ): ParsedBatchItem[] {
   const initialLines = initialRawInput?.split(/\r?\n/);
   return rawInput
@@ -567,7 +592,11 @@ function parseBatchInput(
           : undefined;
       const initialFilename =
         initialLine?.trim() === line.trim()
+<<<<<<< HEAD
           ? initialFilenames?.[lineNumber - 1]?.trim() || undefined
+=======
+          ? initialFilenames?.[lineNumber - 1]
+>>>>>>> chat263/M3U8Quicker/master
           : undefined;
 
       return parseBatchLine(line, lineNumber, initialFileType, initialFilename);
@@ -587,7 +616,7 @@ function parseBatchLine(
       lineNumber,
       rawLine,
       url: trimmed,
-      filename: deriveFilenameFromInlineDashJson(trimmed),
+      filename: initialFilename || deriveFilenameFromInlineDashJson(trimmed),
       filenameEdited: false,
       mode: "dash",
       fileType: "dash",

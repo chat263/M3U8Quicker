@@ -19,7 +19,7 @@
 </p>
 
 
-**M3U8 Quicker** is a desktop application built with `Tauri + Rust + React + TypeScript` for downloading HLS, DASH, and MP4 videos and recording live streams. It supports Windows, macOS, and Linux.
+**M3U8 Quicker** is a desktop application built with `Tauri + Rust + React + TypeScript` for downloading HLS, DASH, and MP4 videos and recording live streams. It supports Windows, macOS, and Linux.　[⬇ Download and install](#installation)
 
 ![Download manager](./doc/img/download_main_en.png)
 
@@ -51,7 +51,6 @@ The application includes an optional **browser extension (Chrome/Firefox/Edge)**
 - Automatically detect videos and live streams on web pages.
 - Create video download or live recording tasks with one click.
 - Support sites such as Bilibili, Douyin, and CCTV in addition to generic video URLs.
-- Switch between Chinese and English with “中 / EN”. The extension initially follows the browser language and remembers your manual selection.
 
 ## Usage
 
@@ -61,9 +60,9 @@ Download the desktop installer or release archive for your system from [GitHub R
 
 | System | Files | Which to choose |
 | :--- | :--- | :--- |
-| <img src="./doc/img/icons/windows.svg" width="18" height="18" alt="Windows" /> **Windows** | **x64**: [Installer](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_windows_x64_setup.exe) \| [Portable](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_windows_x64.zip)<br>**x86**: [Installer](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_windows_x86_setup.exe) \| [Portable](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_windows_x86.zip) | Choose x64 for most PCs.<br>Choose x86 for 32-bit systems. |
-| <img src="./doc/img/icons/macos.svg" width="18" height="18" alt="macOS" /> **macOS** | **Apple Silicon**: [Installer](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_macos_aarch64.dmg) \| [App archive](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_macos_aarch64.app.tar.gz)<br>**Intel**: [Installer](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_macos_x64.dmg) \| [App archive](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_macos_x64.app.tar.gz) | Choose Apple Silicon for M-series chips.<br>Choose Intel for Intel-based Macs. |
-| <img src="./doc/img/icons/linux.svg" width="18" height="18" alt="Linux" /> **Linux** | **Packages**: [deb](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_linux_amd64.deb) \| [rpm](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_linux_x86_64.rpm)<br>**Portable**: [AppImage](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.2.9_linux_amd64.AppImage) | Choose deb for Ubuntu, Debian, or Linux Mint.<br>Choose rpm for Fedora, RHEL, CentOS, or openSUSE. |
+| <img src="./doc/img/icons/windows.svg" width="18" height="18" alt="Windows" /> **Windows** | **x64**: [Installer](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_windows_x64_setup.exe) \| [Portable](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_windows_x64.zip)<br>**x86**: [Installer](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_windows_x86_setup.exe) \| [Portable](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_windows_x86.zip) | Choose x64 for most PCs.<br>Choose x86 for 32-bit systems. |
+| <img src="./doc/img/icons/macos.svg" width="18" height="18" alt="macOS" /> **macOS** | **Apple Silicon**: [Installer](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_macos_aarch64.dmg) \| [App archive](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_macos_aarch64.app.tar.gz)<br>**Intel**: [Installer](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_macos_x64.dmg) \| [App archive](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_macos_x64.app.tar.gz) | Choose Apple Silicon for M-series chips.<br>Choose Intel for Intel-based Macs. |
+| <img src="./doc/img/icons/linux.svg" width="18" height="18" alt="Linux" /> **Linux** | **Packages**: [deb](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_linux_amd64.deb) \| [rpm](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_linux_x86_64.rpm)<br>**Portable**: [AppImage](https://github.com/Liubsyy/M3U8Quicker/releases/latest/download/M3U8.Quicker_1.3.1_linux_amd64.AppImage) | Choose deb for Ubuntu, Debian, or Linux Mint.<br>Choose rpm for Fedora, RHEL, CentOS, or openSUSE. |
 
 If macOS displays a message such as “cannot be opened” or “app is damaged” when you first install the application:
 
@@ -77,6 +76,21 @@ xattr -rd com.apple.quarantine /Applications/M3U8\ Quicker.app
 **Browser extension (optional)**
 
 Open `M3U8 Quicker` → `Tools` → `Install Browser Extension` and follow the instructions for Chrome, Firefox, or Microsoft Edge.
+
+**FFmpeg downloads**
+
+FFmpeg is used for transcoding, merging, and video previews. Download or configure it under **Settings → FFmpeg**, or use the direct links for your platform below:
+
+| Platform | Architecture | Download |
+| --- | --- | --- |
+| Windows | x64 | [ffmpeg-windows-x64.zip](https://github.com/Liubsyy/M3U8Quicker/releases/download/ffmpeg-2026-11-01/ffmpeg-windows-x64.zip) |
+| Windows | x86 (32-bit) | [ffmpeg-windows-x86.zip](https://github.com/Liubsyy/M3U8Quicker/releases/download/ffmpeg-2026-11-01/ffmpeg-windows-x86.zip) |
+| Linux | x64 | [ffmpeg-linux-x64.tar.xz](https://github.com/Liubsyy/M3U8Quicker/releases/download/ffmpeg-2026-11-01/ffmpeg-linux-x64.tar.xz) |
+| Linux | ARM64 | [ffmpeg-linux-arm64.tar.xz](https://github.com/Liubsyy/M3U8Quicker/releases/download/ffmpeg-2026-11-01/ffmpeg-linux-arm64.tar.xz) |
+| macOS | Intel x64 | [ffmpeg-macos-x64.zip](https://github.com/Liubsyy/M3U8Quicker/releases/download/ffmpeg-2026-11-01/ffmpeg-macos-x64.zip) |
+| macOS | Apple Silicon | [ffmpeg-macos-arm64.zip](https://github.com/Liubsyy/M3U8Quicker/releases/download/ffmpeg-2026-11-01/ffmpeg-macos-arm64.zip) |
+
+All packages include FFmpeg and FFprobe. After extracting, select `ffmpeg.exe` (Windows) or `ffmpeg` (macOS/Linux) under **Settings → FFmpeg**, and keep `ffprobe.exe` or `ffprobe` in the same directory.
 
 ### Create a download
 

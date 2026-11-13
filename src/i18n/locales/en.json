@@ -1,4 +1,13 @@
 {
+  "networkLink": "Network link",
+  "localFile": "Local file",
+  "failedToLoadRecordingHistory": "Failed to load recording history: {{value0}}",
+  "searchDownloadFilename": "Search filenames",
+  "searchByFilename": "Search by filename",
+  "matchingDownloadCount": "Found {{value0}} matching records",
+  "noMatchingDownloads": "No matching records found",
+  "searchingDownloads": "Searching…",
+  "failedToLoadDownloadHistory": "Failed to load download history: {{value0}}",
   "installChromeExtension": "Install Chrome extension",
   "openChrome": "Open Chrome",
   "installMicrosoftEdgeExtension": "Install Microsoft Edge extension",
@@ -572,5 +581,16 @@
   "browserExtensionsPage": "This opens the {{browser}} extensions page.",
   "failedSegmentCount": "Failed: {{count}} segments",
   "previewLoadedCount": "Loaded {{loaded}}/{{total}} images",
-  "downloadingInstaller": "Downloading {{name}}"
+  "downloadingInstaller": "Downloading {{name}}",
+  "ignoreHttpsCertificateErrors": "Ignore HTTPS certificate errors",
+  "ignoreHttpsCertificateErrorsDescription": "Skip certificate and hostname validation to access resources with expired or self-signed certificates. This reduces connection security; use only with trusted sources. Pause and resume running tasks to apply.",
+  "httpsCertificateSettingsSaved": "HTTPS certificate settings saved",
+  "failedToSaveHttpsCertificateSettings": "Failed to save HTTPS certificate settings: {{value0}}",
+  "directParallelDownload": "Concurrent chunk download",
+  "directParallelDownloadHint": "Enable concurrent chunk downloads for direct video links in this batch. The server must support Range requests.",
+  "directSingleFallback": "Single connection (parallel unavailable)",
+  "directCheckingRanges": "Checking range support",
+  "directBuffering": "Buffering downloaded chunks…",
+  "directRestartRequired": "Restart required",
+  "directRestartExplanation": "The remote file or range support changed, or its version cannot be verified. Restarting will discard {{value0}} of saved chunks and download again."
 }

@@ -1,4 +1,5 @@
 mod commands;
+mod batch_bridge;
 mod downloader;
 mod error;
 mod ffmpeg;
@@ -12,6 +13,7 @@ mod preview;
 mod remux;
 mod state;
 mod update;
+mod window_launch;
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -24,6 +26,7 @@ use tauri_plugin_deep_link::DeepLinkExt;
 
 use crate::models::{DownloadId, DownloadTask};
 use state::AppState;
+use window_launch::is_preview_launch;
 
 struct TrayProxyMenuState {
     enabled_item: CheckMenuItem<tauri::Wry>,
@@ -41,15 +44,14 @@ pub fn run() {
         .to_string();
 
     let app_state = AppState::new(download_dir);
+    #[cfg(target_os = "macos")]
+    let mut mac_window_activation = window_launch::MacWindowActivation::default();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                if window.is_minimized().unwrap_or(false) {
-                    let _ = window.unminimize();
-                }
-                let _ = window.show();
-                let _ = window.set_focus();
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // deep-link 插件已转发链接；预览只需由隐藏的主 WebView 创建预览窗口。
+            if !is_preview_launch(args.iter().map(String::as_str)) {
+                show_main_window(app);
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
@@ -67,6 +69,7 @@ pub fn run() {
                 .build(),
         )
         .manage(app_state)
+        .manage(batch_bridge::BatchBridge::default())
         .on_window_event(|window, event| {
             let tauri::WindowEvent::CloseRequested { api, .. } = event else {
                 return;
@@ -291,6 +294,8 @@ pub fn run() {
                     let mut user_agent = state.user_agent.lock().await;
                     *user_agent = settings.user_agent.clone();
                 }
+                *state.ignore_https_certificate_errors.lock().await =
+                    settings.ignore_https_certificate_errors;
                 downloader::set_timeouts_secs(
                     settings.metadata_timeout_secs,
                     settings.segment_timeout_secs,
@@ -308,9 +313,17 @@ pub fn run() {
                     let proxy = state.proxy_settings.lock().await;
                     let proxy_url = proxy.url.trim();
                     let next_client = if proxy.enabled && !proxy_url.is_empty() {
-                        downloader::build_http_client(Some(proxy_url), &settings.user_agent)
+                        downloader::build_http_client(
+                            Some(proxy_url),
+                            &settings.user_agent,
+                            settings.ignore_https_certificate_errors,
+                        )
                     } else {
-                        downloader::build_http_client(None, &settings.user_agent)
+                        downloader::build_http_client(
+                            None,
+                            &settings.user_agent,
+                            settings.ignore_https_certificate_errors,
+                        )
                     };
                     match next_client {
                         Ok(client) => {
@@ -379,6 +392,16 @@ pub fn run() {
                 let mut downloads: tokio::sync::MutexGuard<'_, HashMap<DownloadId, DownloadTask>> =
                     state.downloads.lock().await;
                 for mut task in saved {
+                    if let Err(error) = downloader::direct::restore(&mut task).await {
+                        eprintln!("Failed to restore Direct blocks: {error}");
+                    }
+                    if task.direct_parallel {
+                        let saved = persistence::save_task(&handle, &task).await.is_ok();
+                        if task.status == crate::models::DownloadStatus::Completed {
+                            if saved { let _ = downloader::direct::cleanup(&task).await; }
+                            continue;
+                        }
+                    }
                     if matches!(
                         task.status,
                         crate::models::DownloadStatus::Pending
@@ -410,13 +433,19 @@ pub fn run() {
                 }
             });
 
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
+            // 主窗口在配置中默认隐藏，避免预览冷启动时先闪出主窗口。
+            // macOS 等系统 Opened 事件处理完后再决定，不能依赖 CLI 参数。
+            #[cfg(not(target_os = "macos"))]
+            {
+                let args: Vec<String> = std::env::args().collect();
+                if !is_preview_launch(args.iter().map(String::as_str)) {
+                    show_main_window(app.handle());
+                }
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            batch_bridge::receive_browser_batch,
             i18n::get_app_language,
             i18n::set_app_language,
             commands::inspect_hls_tracks,
@@ -439,6 +468,7 @@ pub fn run() {
             commands::get_app_settings,
             commands::set_proxy_settings,
             commands::set_user_agent,
+            commands::set_ignore_https_certificate_errors,
             commands::set_timeout_settings,
             commands::set_live_record_settings,
             commands::set_download_concurrency,
@@ -469,6 +499,7 @@ pub fn run() {
             commands::set_ffmpeg_path,
             commands::set_ffmpeg_enabled,
             commands::create_preview_session,
+            commands::show_preview_dialog,
             commands::extract_preview_thumbnails,
             commands::cancel_preview_thumbnails,
             commands::close_preview_session,
@@ -493,18 +524,19 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, _event| {
-            // macOS: 当 Dock 图标被点击且没有可见窗口时,系统会触发 Reopen 事件,
-            // 应用需要自己把隐藏到托盘的主窗口重新显示出来。
+        .run(move |_app_handle, _event| {
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen {
-                has_visible_windows,
-                ..
-            } = _event
-            {
-                if !has_visible_windows {
-                    show_main_window(_app_handle);
+            match _event {
+                tauri::RunEvent::Opened { urls } => mac_window_activation.opened(&urls),
+                tauri::RunEvent::Reopen { has_visible_windows, .. } => {
+                    mac_window_activation.reopen(has_visible_windows);
                 }
+                tauri::RunEvent::MainEventsCleared => {
+                    if mac_window_activation.finish_event_batch() {
+                        show_main_window(_app_handle);
+                    }
+                }
+                _ => {}
             }
         });
 }

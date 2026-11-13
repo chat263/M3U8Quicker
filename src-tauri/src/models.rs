@@ -164,6 +164,12 @@ pub enum DownloadStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectDownloadInfo {
+    pub parallel: bool,
+    pub total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadTask {
     pub id: DownloadId,
     pub url: String,
@@ -174,6 +180,10 @@ pub struct DownloadTask {
     pub filename: String,
     #[serde(default)]
     pub file_type: FileType,
+    #[serde(default)]
+    pub direct_parallel: bool,
+    #[serde(default)]
+    pub direct_info: Option<DirectDownloadInfo>,
     #[serde(default)]
     pub hls_output_mode: HlsOutputMode,
     #[serde(default)]
@@ -228,6 +238,8 @@ impl DownloadTask {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgressEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub direct_info: Option<DirectDownloadInfo>,
     pub id: DownloadId,
     pub status: DownloadStatus,
     pub group: DownloadGroup,
@@ -242,6 +254,8 @@ pub struct DownloadProgressEvent {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateDownloadParams {
+    #[serde(default)]
+    pub direct_parallel: bool,
     pub url: String,
     #[serde(default)]
     pub source_kind: DownloadSourceKind,
@@ -267,7 +281,7 @@ pub struct ProxySettings {
 
 pub const DEFAULT_DOWNLOAD_CONCURRENCY: usize = 8;
 pub const MIN_DOWNLOAD_CONCURRENCY: usize = 1;
-pub const MAX_DOWNLOAD_CONCURRENCY: usize = 64;
+pub const MAX_DOWNLOAD_CONCURRENCY: usize = 10000;
 pub const DEFAULT_DOWNLOAD_SPEED_LIMIT_KBPS: u64 = 0;
 pub const DEFAULT_PREVIEW_COLUMNS: usize = 3;
 pub const MIN_PREVIEW_COLUMNS: usize = 1;
@@ -443,6 +457,7 @@ pub struct AppSettings {
     pub ffmpeg_path: Option<String>,
     #[serde(default = "default_user_agent_owned")]
     pub user_agent: String,
+    pub ignore_https_certificate_errors: bool,
     #[serde(default = "default_metadata_timeout_secs")]
     pub metadata_timeout_secs: u64,
     #[serde(default = "default_segment_timeout_secs")]
@@ -490,6 +505,7 @@ impl Default for AppSettings {
             ffmpeg_enabled: true,
             ffmpeg_path: None,
             user_agent: default_user_agent().to_string(),
+            ignore_https_certificate_errors: false,
             metadata_timeout_secs: DEFAULT_METADATA_TIMEOUT_SECS,
             segment_timeout_secs: DEFAULT_SEGMENT_TIMEOUT_SECS,
             mp4_timeout_secs: DEFAULT_MP4_TIMEOUT_SECS,
@@ -659,6 +675,10 @@ pub struct DownloadTaskSummary {
     #[serde(default)]
     pub file_type: FileType,
     #[serde(default)]
+    pub direct_parallel: bool,
+    #[serde(default)]
+    pub direct_info: Option<DirectDownloadInfo>,
+    #[serde(default)]
     pub hls_output_mode: HlsOutputMode,
     #[serde(default)]
     pub hls_media_kind: HlsMediaKind,
@@ -686,6 +706,8 @@ fn default_playback_available() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadTaskSegmentState {
+    #[serde(default)]
+    pub segment_errors: HashMap<usize, String>,
     pub id: DownloadId,
     pub total_segments: usize,
     pub completed_segment_indices: Vec<usize>,
@@ -973,6 +995,14 @@ pub struct LiveRecordPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn https_certificate_errors_are_not_ignored_by_default_or_legacy_settings() {
+        assert!(!AppSettings::default().ignore_https_certificate_errors);
+        let legacy: AppSettings = serde_json::from_str(r#"{"user_agent":"legacy-agent"}"#).unwrap();
+        assert!(!legacy.ignore_https_certificate_errors);
+        assert_eq!(legacy.user_agent, "legacy-agent");
+    }
 
     #[test]
     fn app_settings_defaults_download_speed_limit_to_unlimited() {

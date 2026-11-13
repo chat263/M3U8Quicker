@@ -109,7 +109,9 @@ pub async fn create_download(
     let created_at = Utc::now();
 
     if file_type.is_direct_download() {
-        let task = DownloadTask {
+        let mut task = DownloadTask {
+            direct_parallel: params.direct_parallel,
+            direct_info: None,
             id: id.clone(),
             url: params.url.clone(),
             source_kind: params.source_kind,
@@ -140,11 +142,22 @@ pub async fn create_download(
             file_path: None,
         };
 
+        if task.direct_parallel {
+            let info = downloader::direct::prepare_new(&client, &task, &request_headers).await?;
+            task.total_segments = info.total_bytes.div_ceil(downloader::direct::CHUNK_SIZE) as usize;
+            task.direct_info = Some(info);
+            if let Err(error) = persistence::save_task(&app_handle, &task).await {
+                let _ = downloader::direct::cleanup(&task).await;
+                return Err(error);
+            }
+        }
         {
             let mut downloads = state.downloads.lock().await;
             downloads.insert(id.clone(), task.clone());
         }
-        persistence::save_task(&app_handle, &task).await?;
+        if !task.direct_parallel {
+            persistence::save_task(&app_handle, &task).await?;
+        }
 
         start_mp4_download_worker(
             app_handle.clone(),
@@ -176,6 +189,8 @@ pub async fn create_download(
             .to_string_lossy()
             .to_string();
         let task = DownloadTask {
+            direct_parallel: false,
+            direct_info: None,
             id: id.clone(),
             url: task_url,
             source_kind: params.source_kind,
@@ -237,6 +252,8 @@ pub async fn create_download(
         {
             downloader::PreparedHlsDownload::Single(prepared) => {
                 let task = DownloadTask {
+                    direct_parallel: false,
+                    direct_info: None,
                     id: id.clone(),
                     url: params.url.clone(),
                     source_kind: params.source_kind,
@@ -296,6 +313,8 @@ pub async fn create_download(
                     .to_string_lossy()
                     .to_string();
                 let task = DownloadTask {
+                    direct_parallel: false,
+                    direct_info: None,
                     id: id.clone(),
                     url: params.url.clone(),
                     source_kind: params.source_kind,
@@ -357,9 +376,10 @@ pub async fn pause_download(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), AppError> {
+    let direct_parallel = state.downloads.lock().await.get(&id).is_some_and(|task| task.direct_parallel);
     let token = {
         let mut tokens = state.cancel_tokens.lock().await;
-        tokens.remove(&id)
+        if direct_parallel { tokens.get(&id).cloned() } else { tokens.remove(&id) }
     };
 
     let Some(token) = token else {
@@ -420,14 +440,14 @@ pub async fn resume_download(
 
     if task.file_type.is_direct_download() {
         let client = state.http_client.read().await.clone();
-        let resume_check = downloader::check_mp4_resume(
-            &client,
-            &task.url,
-            &request_headers,
-            &PathBuf::from(&task.output_dir),
-            &task.filename,
-        )
-        .await?;
+        let resume_check = if task.direct_parallel {
+            downloader::direct::check_resume(&client, &task, &request_headers).await?
+        } else {
+            downloader::check_mp4_resume(
+                &client, &task.url, &request_headers,
+                &PathBuf::from(&task.output_dir), &task.filename,
+            ).await?
+        };
         let should_restart_mp4 = matches!(
             resume_check,
             downloader::Mp4ResumeCheck::RequiresRestartConfirmation { .. }
@@ -695,14 +715,14 @@ pub async fn check_resume_download(
 
     let client = state.http_client.read().await.clone();
     let request_headers = parse_request_headers(task.extra_headers.as_deref())?;
-    let check = downloader::check_mp4_resume(
-        &client,
-        &task.url,
-        &request_headers,
-        &PathBuf::from(&task.output_dir),
-        &task.filename,
-    )
-    .await?;
+    let check = if task.direct_parallel {
+        downloader::direct::check_resume(&client, &task, &request_headers).await?
+    } else {
+        downloader::check_mp4_resume(
+            &client, &task.url, &request_headers,
+            &PathBuf::from(&task.output_dir), &task.filename,
+        ).await?
+    };
 
     Ok(match check {
         downloader::Mp4ResumeCheck::Ready { downloaded_bytes } => ResumeDownloadCheckResult {
@@ -725,6 +745,27 @@ pub async fn retry_failed_segments(
     id: String,
 ) -> Result<DownloadTaskSummary, AppError> {
     let task = get_or_load_task(&app_handle, &state, &id).await?;
+
+    if task.file_type.is_direct_download() && task.direct_parallel {
+        if state.cancel_tokens.lock().await.contains_key(&id) {
+            return Err(AppError::InvalidInput("请等待当前下载结束，或暂停后再重试失败分片".into()));
+        }
+        if !matches!(task.status, DownloadStatus::Paused | DownloadStatus::Failed(_)) {
+            return Err(AppError::InvalidInput("该任务当前不能重试分片".into()));
+        }
+        let mut updated = task.clone();
+        updated.status = DownloadStatus::Downloading;
+        updated.speed_bytes_per_sec = 0;
+        updated.completed_at = None;
+        updated.touch();
+        let headers = parse_request_headers(updated.extra_headers.as_deref())?;
+        state.downloads.lock().await.insert(id.clone(), updated.clone());
+        persistence::save_task(&app_handle, &updated).await?;
+        let _ = app_handle.emit("download-progress", task_to_progress(&updated));
+        start_mp4_download_worker(app_handle.clone(), state.downloads.clone(),
+            state.cancel_tokens.clone(), state.http_client.clone(), updated.clone(), headers, true, false).await;
+        return Ok(persistence::task_to_summary(&updated));
+    }
 
     if task.failed_segment_indices.is_empty() {
         return Err(AppError::InvalidInput(
@@ -964,11 +1005,17 @@ pub async fn cancel_download(
 
     let token = {
         let mut tokens = state.cancel_tokens.lock().await;
-        tokens.remove(&id)
+        if task.direct_parallel { tokens.get(&id).cloned() } else { tokens.remove(&id) }
     };
 
     if let Some(token) = token {
         token.cancel();
+        if task.direct_parallel { wait_direct_worker(&state, &id).await?; }
+    } else if task.file_type.is_direct_download() && task.direct_parallel {
+        downloader::direct::cleanup(&task).await?;
+        if task.direct_info.as_ref().is_some_and(|info| !info.parallel) {
+            downloader::cleanup_mp4_partial_file(&PathBuf::from(&task.output_dir), &task.filename).await?;
+        }
     } else if task.file_type.is_direct_download() {
         downloader::cleanup_mp4_partial_file(&PathBuf::from(&task.output_dir), &task.filename)
             .await?;
@@ -1005,12 +1052,13 @@ pub async fn get_downloads_page(
     group: DownloadGroup,
     page: usize,
     page_size: usize,
+    keyword: Option<String>,
 ) -> Result<DownloadTaskPage, AppError> {
     if group == DownloadGroup::Active {
         return Ok(get_active_downloads_page(&state, page, page_size).await);
     }
 
-    persistence::get_downloads_page(&app_handle, group, page, page_size).await
+    persistence::get_downloads_page(&app_handle, group, page, page_size, keyword.as_deref()).await
 }
 
 #[tauri::command]
@@ -1023,12 +1071,19 @@ pub async fn get_download_segment_state(
         let downloads = state.downloads.lock().await;
         downloads.get(&id).cloned()
     } {
-        return Ok(persistence::task_to_segment_state(&task));
+        let mut segments = persistence::task_to_segment_state(&task);
+        if task.direct_parallel { segments.segment_errors = downloader::direct::errors(&task).await?; }
+        return Ok(segments);
     }
-
-    persistence::load_download_segment_state(&app_handle, &id)
+    let mut segments = persistence::load_download_segment_state(&app_handle, &id)
         .await?
-        .ok_or_else(|| AppError::InvalidInput(format!("Download {} not found", id)))
+        .ok_or_else(|| AppError::InvalidInput(format!("Download {} not found", id)))?;
+    if !segments.failed_segment_indices.is_empty() {
+        if let Some(task) = persistence::load_download_task(&app_handle, &id).await? {
+            if task.direct_parallel { segments.segment_errors = downloader::direct::errors(&task).await?; }
+        }
+    }
+    Ok(segments)
 }
 
 #[tauri::command]
@@ -1056,12 +1111,16 @@ pub async fn remove_download(
     id: String,
     delete_file: bool,
 ) -> Result<(), AppError> {
+    let direct_parallel = state.downloads.lock().await.get(&id).is_some_and(|task| task.direct_parallel);
     {
         let mut tokens = state.cancel_tokens.lock().await;
-        if let Some(token) = tokens.remove(&id) {
+        let token = if direct_parallel { tokens.get(&id).cloned() } else { tokens.remove(&id) };
+        if let Some(token) = token {
             token.cancel();
         }
     }
+
+    if direct_parallel { wait_direct_worker(&state, &id).await?; }
 
     let removed_task = {
         let mut downloads = state.downloads.lock().await;
@@ -1083,7 +1142,12 @@ pub async fn remove_download(
             }
         }
         playback::remove_download_priority_state(&state.download_priorities, &task.id).await;
-        if task.file_type.is_direct_download() {
+        if task.file_type.is_direct_download() && task.direct_parallel {
+            let _ = downloader::direct::cleanup(&task).await;
+            if task.direct_info.as_ref().is_some_and(|info| !info.parallel) {
+                let _ = downloader::cleanup_mp4_partial_file(&PathBuf::from(&task.output_dir), &task.filename).await;
+            }
+        } else if task.file_type.is_direct_download() {
             let _ = downloader::cleanup_mp4_partial_file(
                 &PathBuf::from(&task.output_dir),
                 &task.filename,
@@ -1221,6 +1285,7 @@ pub async fn get_app_settings(
         ffmpeg_enabled: *state.ffmpeg_enabled.lock().await,
         ffmpeg_path: state.ffmpeg_path.lock().await.clone(),
         user_agent: state.user_agent.lock().await.clone(),
+        ignore_https_certificate_errors: *state.ignore_https_certificate_errors.lock().await,
         metadata_timeout_secs,
         segment_timeout_secs,
         mp4_timeout_secs,
@@ -1240,19 +1305,42 @@ pub async fn get_app_settings(
     })
 }
 
-/// 按当前 state 中的代理与 User-Agent 重建共享 HTTP 客户端。
-/// 代理、UA、分片超时任一变更后都应调用它，确保新客户端配置一致。
+/// 按当前代理、User-Agent、证书校验与超时设置重建共享 HTTP 客户端。
 async fn rebuild_http_client(state: &AppState) -> Result<(), AppError> {
+    let ignore_https_certificate_errors = *state.ignore_https_certificate_errors.lock().await;
+    let client = build_current_http_client(state, ignore_https_certificate_errors).await?;
+    let mut current_client = state.http_client.write().await;
+    *current_client = client;
+    Ok(())
+}
+
+async fn build_current_http_client(
+    state: &AppState,
+    ignore_https_certificate_errors: bool,
+) -> Result<reqwest::Client, AppError> {
     let proxy = state.proxy_settings.lock().await.clone();
     let user_agent = state.user_agent.lock().await.clone();
     let proxy_url = proxy.url.trim();
-    let client = if proxy.enabled && !proxy_url.is_empty() {
-        downloader::build_http_client(Some(proxy_url), &user_agent)?
+    if proxy.enabled && !proxy_url.is_empty() {
+        downloader::build_http_client(Some(proxy_url), &user_agent, ignore_https_certificate_errors)
     } else {
-        downloader::build_http_client(None, &user_agent)?
-    };
-    let mut current_client = state.http_client.write().await;
-    *current_client = client;
+        downloader::build_http_client(None, &user_agent, ignore_https_certificate_errors)
+    }
+}
+
+#[tauri::command]
+pub async fn set_ignore_https_certificate_errors(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    let client = build_current_http_client(&state, enabled).await?;
+    persistence::try_update_settings(&app_handle, |settings| {
+        settings.ignore_https_certificate_errors = enabled;
+    })
+    .await?;
+    *state.ignore_https_certificate_errors.lock().await = enabled;
+    *state.http_client.write().await = client;
     Ok(())
 }
 
@@ -1278,7 +1366,12 @@ pub(crate) async fn apply_proxy_settings(
     // 在写入 state 前先校验代理地址，避免把无效代理持久化进去。
     if proxy.enabled {
         let user_agent = state.user_agent.lock().await.clone();
-        let _ = downloader::build_http_client(Some(proxy_url), &user_agent)?;
+        let ignore_https_certificate_errors = *state.ignore_https_certificate_errors.lock().await;
+        let _ = downloader::build_http_client(
+            Some(proxy_url),
+            &user_agent,
+            ignore_https_certificate_errors,
+        )?;
     }
 
     {
@@ -2341,6 +2434,30 @@ pub struct CreatePreviewSessionResponse {
 }
 
 #[tauri::command]
+pub async fn show_preview_dialog(
+    app_handle: AppHandle,
+    title: String,
+    message: String,
+    settings_labels: Option<(String, String)>,
+) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    // 不设置 parent：macOS 的 sheet 会附着于隐藏的主窗口，导致提示不可见。
+    let dialog = app_handle.dialog().message(message).title(title);
+    if let Some((settings_label, cancel_label)) = settings_labels {
+        dialog
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                settings_label,
+                cancel_label,
+            ))
+            .blocking_show()
+    } else {
+        dialog.kind(MessageDialogKind::Error).blocking_show()
+    }
+}
+
+#[tauri::command]
 pub async fn create_preview_session(
     app_handle: AppHandle,
     state: State<'_, AppState>,
@@ -2348,13 +2465,15 @@ pub async fn create_preview_session(
     extra_headers: Option<String>,
     source_kind: Option<DownloadSourceKind>,
     source_text: Option<String>,
+    local_path: Option<String>,
 ) -> Result<CreatePreviewSessionResponse, AppError> {
     let source_kind = source_kind.unwrap_or(DownloadSourceKind::Url);
     let trimmed_url = url.trim();
-    if trimmed_url.is_empty() {
+    if local_path.is_none() && trimmed_url.is_empty() {
         return Err(AppError::InvalidInput(crate::i18n::tr("enterADownloadUrl").to_string()));
     }
     // Surface invalid Header format early using the existing parser.
+    let extra_headers = if local_path.is_some() { None } else { extra_headers };
     parse_request_headers(extra_headers.as_deref())?;
 
     let normalized_headers = extra_headers
@@ -2379,6 +2498,7 @@ pub async fn create_preview_session(
         normalized_headers,
         source_kind,
         normalized_source_text,
+        local_path,
     )
     .await?;
     Ok(CreatePreviewSessionResponse {
@@ -2726,6 +2846,7 @@ fn optional_track_playlist_path(
 
 fn task_to_progress(task: &DownloadTask) -> DownloadProgressEvent {
     DownloadProgressEvent {
+        direct_info: task.direct_info.clone(),
         id: task.id.clone(),
         status: task.status.clone(),
         group: download_group_for_status(&task.status),
@@ -2796,6 +2917,14 @@ async fn get_active_downloads_page(
     }
 }
 
+async fn wait_direct_worker(state: &State<'_, AppState>, id: &str) -> Result<(), AppError> {
+    for _ in 0..100 {
+        if !state.cancel_tokens.lock().await.contains_key(id) { return Ok(()); }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    Err(AppError::InvalidInput("正在停止分块下载，请稍后重试".into()))
+}
+
 async fn start_mp4_download_worker(
     app_handle: AppHandle,
     state_downloads: Arc<Mutex<HashMap<DownloadId, DownloadTask>>>,
@@ -2818,22 +2947,62 @@ async fn start_mp4_download_worker(
         tokens.insert(task_id.clone(), cancel_token.clone());
     }
 
+    let concurrency = app_handle.state::<AppState>().max_concurrent_segments.clone();
+    let priorities = app_handle.state::<AppState>().download_priorities.clone();
     tokio::spawn(async move {
-        let result = downloader::run_mp4_download(
-            app_handle.clone(),
-            state_downloads.clone(),
-            client,
-            rate_limiter,
-            task_id.clone(),
-            url,
-            Arc::new(request_headers),
-            output_dir_path,
-            filename,
-            resume_existing_partial,
-            restart_confirmed,
-            cancel_token.clone(),
-        )
-        .await;
+        let headers = Arc::new(request_headers);
+        let parallel_result = if task.direct_parallel {
+            downloader::direct::run(&app_handle, state_downloads.clone(), client.clone(),
+                rate_limiter.clone(), &task, headers.clone(), concurrency, priorities,
+                restart_confirmed, cancel_token.clone(), !resume_existing_partial).await
+        } else { Ok(None) };
+        let parallel_result = if cancel_token.is_cancelled() { Err(AppError::Cancelled) } else { parallel_result };
+        let result = match parallel_result {
+            Ok(Some(outcome)) => Ok(outcome),
+            Err(error) => Err(error),
+            Ok(None) => {
+                if task.direct_parallel {
+                    let snapshot = {
+                        let mut tasks = state_downloads.lock().await;
+                        tasks.get_mut(&task_id).map(|task| {
+                            task.direct_info = Some(DirectDownloadInfo { parallel: false, total_bytes: 0 });
+                            task.failed_segment_indices.clear();
+                            task.completed_segment_indices.clear();
+                            task.total_segments = 0;
+                            task.completed_segments = 0;
+                            task.total_bytes = 0;
+                            task.touch();
+                            task.clone()
+                        })
+                    };
+                    if let Some(snapshot) = snapshot {
+                        let _ = persistence::save_task(&app_handle, &snapshot).await;
+                        let _ = app_handle.emit("download-progress", task_to_progress(&snapshot));
+                    }
+                }
+                downloader::run_mp4_download(
+                    app_handle.clone(),
+                    state_downloads.clone(),
+                    client,
+                    rate_limiter,
+                    task_id.clone(),
+                    url,
+                    headers,
+                    output_dir_path,
+                    filename,
+                    resume_existing_partial && (!task.direct_parallel
+                        || task.direct_info.as_ref().is_some_and(|info| !info.parallel)),
+                    restart_confirmed,
+                    cancel_token.clone(),
+                )
+                .await
+            }
+        };
+        if task.direct_parallel && matches!(result, Err(AppError::Cancelled)) {
+            let paused = state_downloads.lock().await.get(&task_id)
+                .is_some_and(|task| task.status == DownloadStatus::Paused);
+            if !paused { let _ = downloader::direct::cleanup(&task).await; }
+        }
 
         let mut should_save = false;
         let mut progress_to_emit = None;
@@ -2904,6 +3073,7 @@ async fn start_mp4_download_worker(
             }
         }
 
+        let mut direct_completed_saved = false;
         if should_save {
             let task = {
                 let downloads = state_downloads.lock().await;
@@ -2911,8 +3081,17 @@ async fn start_mp4_download_worker(
             };
 
             if let Some(task) = task {
-                let _ = persistence::save_task(&app_handle, &task).await;
+                direct_completed_saved = persistence::save_task(&app_handle, &task).await.is_ok();
+                if task.direct_parallel {
+                    let state = app_handle.state::<AppState>();
+                    if let Some(session) = state.playback_sessions.lock().await.get_mut(&task.id) {
+                        session.task_snapshot = task.clone();
+                    };
+                }
             }
+        }
+        if task.direct_parallel && direct_completed_saved && matches!(progress_to_emit.as_ref().map(|event| &event.status), Some(DownloadStatus::Completed)) {
+            let _ = downloader::direct::cleanup(&task).await;
         }
         if remove_from_runtime {
             let mut downloads = state_downloads.lock().await;
@@ -3678,7 +3857,7 @@ async fn prepare_firefox_extension_install_dir(
 fn firefox_extension_install_target_dir() -> Result<PathBuf, AppError> {
     let download_dir = dirs::download_dir()
         .or_else(|| dirs::home_dir().map(|home| home.join("Downloads")))
-        .ok_or_else(|| AppError::Internal("获取下载���录失败".to_string()))?;
+        .ok_or_else(|| AppError::Internal("获取下载目录失败".to_string()))?;
 
     Ok(download_dir
         .join("M3U8 Quicker Extension")
@@ -3719,7 +3898,7 @@ where
     }
 
     Err(AppError::InvalidInput(
-        "未找到内置 Firefox 扩展��录".to_string(),
+        "未找到内置 Firefox 扩展目录".to_string(),
     ))
 }
 
@@ -4350,8 +4529,9 @@ pub async fn get_live_records_page(
     group: LiveGroup,
     page: usize,
     page_size: usize,
+    keyword: Option<String>,
 ) -> Result<LiveRecordPage, AppError> {
-    persistence::get_live_records_page(&app_handle, group, page, page_size).await
+    persistence::get_live_records_page(&app_handle, group, page, page_size, keyword.as_deref()).await
 }
 
 /// Convert a finished live recording into MP4 file(s). This is independent of
@@ -4698,9 +4878,34 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[tokio::test]
+    async fn rebuilding_http_client_preserves_https_certificate_setting_and_user_agent() {
+        let server = downloader::tls_tests::HttpsFixture::expired();
+        let state = AppState::new(std::env::temp_dir().to_string_lossy().into_owned());
+        assert!(!*state.ignore_https_certificate_errors.lock().await);
+        // A disabled proxy must stay disabled when the certificate setting changes.
+        state.proxy_settings.lock().await.url = "invalid-proxy".to_string();
+        for (attempt, enabled) in [true, false, true].into_iter().enumerate() {
+            let user_agent = format!("tls-rebuild-agent-{attempt}");
+            *state.user_agent.lock().await = user_agent.clone();
+            *state.ignore_https_certificate_errors.lock().await = enabled;
+            rebuild_http_client(&state).await.unwrap();
+            let client = state.http_client.read().await.clone();
+            let response = client.get(server.url("/user-agent")).send().await;
+            if enabled {
+                assert_eq!(response.unwrap().text().await.unwrap(), user_agent);
+            } else {
+                let error = response.unwrap_err();
+                assert!(!error.is_timeout(), "expected certificate rejection: {error}");
+            }
+        }
+    }
+
     fn build_task(segment_uris: Vec<&str>) -> DownloadTask {
         let total_segments = segment_uris.len();
         DownloadTask {
+            direct_parallel: false,
+            direct_info: None,
             id: "task-id".to_string(),
             url: "https://example.com/video.m3u8".to_string(),
             source_kind: DownloadSourceKind::Url,
@@ -4787,6 +4992,7 @@ mod tests {
     #[test]
     fn resolve_create_download_file_type_infers_direct_type_from_url() {
         let params = CreateDownloadParams {
+            direct_parallel: false,
             url: "https://example.com/media/movie.webm?token=abc".to_string(),
             source_kind: DownloadSourceKind::Url,
             source_text: None,
@@ -4807,6 +5013,7 @@ mod tests {
     #[test]
     fn resolve_create_download_file_type_keeps_hls_mode_even_for_direct_url() {
         let params = CreateDownloadParams {
+            direct_parallel: false,
             url: "https://example.com/media/movie.mp4".to_string(),
             source_kind: DownloadSourceKind::Url,
             source_text: None,
@@ -4827,6 +5034,7 @@ mod tests {
     #[test]
     fn resolve_create_download_file_type_updates_legacy_direct_type_from_url() {
         let params = CreateDownloadParams {
+            direct_parallel: false,
             url: "https://example.com/media/movie.mkv".to_string(),
             source_kind: DownloadSourceKind::Url,
             source_text: None,
@@ -4847,6 +5055,7 @@ mod tests {
     #[test]
     fn resolve_create_download_file_type_defaults_unknown_direct_url_to_mp4() {
         let params = CreateDownloadParams {
+            direct_parallel: false,
             url: "https://example.com/media/download".to_string(),
             source_kind: DownloadSourceKind::Url,
             source_text: None,

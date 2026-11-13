@@ -23,6 +23,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Toolbar } from "./components/Toolbar";
 import { DownloadList } from "./components/DownloadList";
+import { HistorySearchBar } from "./components/HistorySearchBar";
 import { NewDownloadModal } from "./components/NewDownloadModal";
 import { NewLiveRecordModal } from "./components/NewLiveRecordModal";
 import { BatchDownloadModal } from "./components/BatchDownloadModal";
@@ -33,6 +34,7 @@ import { useDownloads } from "./hooks/useDownloads";
 import { useLiveRecords } from "./hooks/useLiveRecords";
 import {
   installChromiumExtension,
+  receiveBrowserBatch,
   openChromiumExtensionsPage,
   installFirefoxExtension,
   openFirefoxAddonsPage,
@@ -41,6 +43,7 @@ import {
   openLivePlaybackSession,
   createPreviewSession,
   closePreviewSession,
+  showPreviewDialog,
   getAppSettings,
   setProxySettings,
   getFfmpegStatus,
@@ -60,6 +63,7 @@ import {
   canOpenInProgressPlayback,
   isDirectFileType,
   liveRecordToDownloadSummary,
+  normalizeDownloadFilename,
   parseFileType,
 } from "./types";
 import type { ThemeMode } from "./types/settings";
@@ -85,7 +89,11 @@ interface BatchDownloadDraft {
   rawInput: string;
   extraHeaders?: string;
   fileTypes?: Array<import("./types").FileType | undefined>;
-  filenames?: Array<string>;
+<<<<<<< HEAD
+  filenames?: Array<string | undefined>;
+=======
+  filenames?: Array<string | undefined>;
+>>>>>>> chat263/M3U8Quicker/master
   nonce: number;
 }
 
@@ -135,6 +143,7 @@ function App({
 }: AppProps) {
   useTranslation();
   const [modalOpen, setModalOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("downloading");
   const [liveRecordModalOpen, setLiveRecordModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<
@@ -182,6 +191,8 @@ function App({
     completedPage,
     completedPageSize,
     completedTotal,
+    historySearch,
+    searchHistory,
     addDownload,
     addDownloadsBatch,
     pause,
@@ -196,6 +207,7 @@ function App({
     refreshHistory,
     getSegmentState,
   } = useDownloads(historyPageSize);
+  const hasHistorySearch = Boolean(historySearch.trim());
   const {
     counts: liveCounts,
     recording: liveRecording,
@@ -206,6 +218,8 @@ function App({
     recordedPage: liveRecordedPage,
     recordedPageSize: liveRecordedPageSize,
     recordedTotal: liveRecordedTotal,
+    historySearch: liveHistorySearch,
+    searchHistory: searchLiveHistory,
     addLiveRecord,
     pause: pauseLive,
     resume: resumeLive,
@@ -218,6 +232,7 @@ function App({
     loadingActive: loadingLiveActive,
     loadingHistory: loadingLiveHistory,
   } = useLiveRecords(historyPageSize);
+  const hasLiveHistorySearch = Boolean(liveHistorySearch.trim());
   const { token } = theme.useToken();
 
   useEffect(() => {
@@ -314,7 +329,7 @@ function App({
 
       const previewDraft = parsePreviewDraft(deepLink);
       if (previewDraft) {
-        void openPreviewWindowFromDeepLink(
+        void openPreviewWindow(
           previewDraft.url,
           previewDraft.extraHeaders,
           previewDraft.title,
@@ -323,6 +338,25 @@ function App({
             setSettingsOpen(true);
           }
         );
+        return;
+      }
+
+      const transfer = parseBatchTransferLink(deepLink);
+      if (transfer) {
+        void bringMainWindowToFront();
+        void receiveBrowserBatch(transfer.id, transfer.secret).then((payload) => {
+          if (!payload) return; // A retry of an already imported batch.
+          setBatchDownloadDraft({
+            rawInput: payload.items.map((item) => item.url).join("\n"),
+            extraHeaders: payload.extra_headers || undefined,
+            fileTypes: payload.items.map((item) => parseFileType(item.file_type)),
+            filenames: payload.items.map((item) => normalizeDownloadFilename(item.title) || undefined),
+            nonce: Date.now(),
+          });
+          setBatchDownloadModalOpen(true);
+        }).catch((error: unknown) => {
+          message.error(t("failedToCreateBatchDownloads", { value0: error instanceof Error ? error.message : String(error) }));
+        });
         return;
       }
 
@@ -707,6 +741,14 @@ function App({
     updated_at: new Date().toISOString(),
   });
 
+  const handlePreviewLocalVideo = (task: DownloadTaskSummary) => {
+    if (!task.file_path) return;
+    void openPreviewWindow("", undefined, task.filename, () => {
+      setSettingsInitialTab("ffmpeg");
+      setSettingsOpen(true);
+    }, task.file_path);
+  };
+
   const tabItems = [
     {
       key: "downloading",
@@ -738,51 +780,57 @@ function App({
       key: "completed",
       label: t("completed", { value0: counts.history_count }),
       children: (
-        <DownloadList
-          downloads={completed}
-          total={completedTotal}
-          currentPage={completedPage}
-          pageSize={completedPageSize}
-          onPageChange={(page) => {
-            void refreshHistory(page);
-          }}
-          getSegmentState={getSegmentState}
-          onPause={pause}
-          onResume={resume}
-          onRetryFailed={retryFailed}
-          onCancel={cancel}
-          onRemove={remove}
-          onPlay={(task) => {
-            void handleOpenPlaybackWindow(task);
-          }}
-          loading={loadingHistory}
-          onAnalyze={(filePath) => {
-            setToolInputPath(filePath);
-            setActiveTool("analyze-media");
-            setToolModalOpen(true);
-          }}
-          showActions={["play", "remove", "open"]}
-          showSpeed={false}
-          actionsHeaderExtra={
-            <Popconfirm
-              title={t("clearThisList")}
-              description={t("onlyCompletedRecordsWillBeRemovedLocalFilesWillBe")}
-              onConfirm={() => void clearCompleted()}
-              okText={t("clearList")}
-              cancelText={t("cancel")}
-              disabled={counts.history_count === 0}
-            >
-              <Button
-                type="text"
-                size="small"
-                danger
-                icon={<ClearOutlined />}
-                aria-label={t("clearList")}
-                disabled={counts.history_count === 0}
-              />
-            </Popconfirm>
-          }
-        />
+        <div>
+          <DownloadList
+            downloads={completed}
+            total={completedTotal}
+            currentPage={completedPage}
+            pageSize={completedPageSize}
+            onPageChange={(page) => {
+              void refreshHistory(page);
+            }}
+            getSegmentState={getSegmentState}
+            onPause={pause}
+            onResume={resume}
+            onRetryFailed={retryFailed}
+            onCancel={cancel}
+            onRemove={remove}
+            onPlay={(task) => {
+              void handleOpenPlaybackWindow(task);
+            }}
+            loading={loadingHistory}
+            emptyText={hasHistorySearch ? t("noMatchingDownloads") : undefined}
+            onPreview={handlePreviewLocalVideo}
+            onAnalyze={(filePath) => {
+              setToolInputPath(filePath);
+              setActiveTool("analyze-media");
+              setToolModalOpen(true);
+            }}
+            showActions={["play", "remove", "open"]}
+            showSpeed={false}
+            actionsHeaderExtra={
+              !hasHistorySearch && !loadingHistory && (
+                <Popconfirm
+                  title={t("clearThisList")}
+                  description={t("onlyCompletedRecordsWillBeRemovedLocalFilesWillBe")}
+                  onConfirm={() => void clearCompleted()}
+                  okText={t("clearList")}
+                  cancelText={t("cancel")}
+                  disabled={counts.history_count === 0}
+                >
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<ClearOutlined />}
+                    aria-label={t("clearList")}
+                    disabled={counts.history_count === 0}
+                  />
+                </Popconfirm>
+              )
+            }
+          />
+        </div>
       ),
     },
     {
@@ -823,47 +871,53 @@ function App({
       key: "live-recorded",
       label: t("recorded2", { value0: liveCounts.history_count }),
       children: (
-        <DownloadList
-          downloads={liveRecordedItems}
-          total={liveRecordedTotal}
-          currentPage={liveRecordedPage}
-          pageSize={liveRecordedPageSize}
-          onPageChange={(page) => {
-            void refreshLiveHistory(page);
-          }}
-          getSegmentState={noopGetSegmentState}
-          onPause={() => undefined}
-          onResume={() => undefined}
-          onRetryFailed={() => undefined}
-          onCancel={() => undefined}
-          onRemove={removeLive}
-          onPlay={(task) => {
-            void handleOpenLivePlaybackWindow(task);
-          }}
-          loading={loadingLiveHistory}
-          showActions={["play", "remove", "open"]}
-          showSpeed={false}
-          statusTagOverride={liveStatusTagOverride}
-          actionsHeaderExtra={
-            <Popconfirm
-              title={t("clearThisList")}
-              description={t("onlyCompletedRecordingRecordsWillBeRemovedLocalFilesWill")}
-              onConfirm={() => void clearLiveCompleted()}
-              okText={t("clearList")}
-              cancelText={t("cancel")}
-              disabled={liveCounts.history_count === 0}
-            >
-              <Button
-                type="text"
-                size="small"
-                danger
-                icon={<ClearOutlined />}
-                aria-label={t("clearList")}
-                disabled={liveCounts.history_count === 0}
-              />
-            </Popconfirm>
-          }
-        />
+        <div>
+          <DownloadList
+            downloads={liveRecordedItems}
+            total={liveRecordedTotal}
+            currentPage={liveRecordedPage}
+            pageSize={liveRecordedPageSize}
+            onPageChange={(page) => {
+              void refreshLiveHistory(page);
+            }}
+            getSegmentState={noopGetSegmentState}
+            onPause={() => undefined}
+            onResume={() => undefined}
+            onRetryFailed={() => undefined}
+            onCancel={() => undefined}
+            onRemove={removeLive}
+            onPlay={(task) => {
+              void handleOpenLivePlaybackWindow(task);
+            }}
+            loading={loadingLiveHistory}
+            emptyText={hasLiveHistorySearch ? t("noMatchingDownloads") : undefined}
+            onPreview={handlePreviewLocalVideo}
+            showActions={["play", "remove", "open"]}
+            showSpeed={false}
+            statusTagOverride={liveStatusTagOverride}
+            actionsHeaderExtra={
+              !hasLiveHistorySearch && !loadingLiveHistory && (
+                <Popconfirm
+                  title={t("clearThisList")}
+                  description={t("onlyCompletedRecordingRecordsWillBeRemovedLocalFilesWill")}
+                  onConfirm={() => void clearLiveCompleted()}
+                  okText={t("clearList")}
+                  cancelText={t("cancel")}
+                  disabled={liveCounts.history_count === 0}
+                >
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<ClearOutlined />}
+                    aria-label={t("clearList")}
+                    disabled={liveCounts.history_count === 0}
+                  />
+                </Popconfirm>
+              )
+            }
+          />
+        </div>
       ),
     },
   ];
@@ -928,7 +982,28 @@ function App({
           background: token.colorBgLayout,
         }}
       >
-        <Tabs items={tabItems} defaultActiveKey="downloading" />
+        <Tabs
+          items={tabItems}
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          tabBarExtraContent={
+            activeTab === "completed" ? (
+              <HistorySearchBar
+                value={historySearch}
+                onChange={searchHistory}
+                loading={loadingHistory}
+                total={completedTotal}
+              />
+            ) : activeTab === "live-recorded" ? (
+              <HistorySearchBar
+                value={liveHistorySearch}
+                onChange={searchLiveHistory}
+                loading={loadingLiveHistory}
+                total={liveRecordedTotal}
+              />
+            ) : null
+          }
+        />
       </Content>
       <NewDownloadModal
         open={modalOpen}
@@ -1571,8 +1646,14 @@ function parseDownloadDraft(deepLink: string): Omit<DownloadDraft, "nonce"> | nu
     const extraHeaders = parsed.searchParams.get("extra_headers")?.trim() || undefined;
     const rawFileType = parsed.searchParams.get("file_type");
     const fileType = parseFileType(rawFileType);
+<<<<<<< HEAD
     const rawFilename = parsed.searchParams.get("filename")?.trim() || undefined;
     return { url, extraHeaders, fileType, filename: rawFilename };
+=======
+    const title = parsed.searchParams.get("title");
+    const filename = title ? normalizeDownloadFilename(title) || undefined : undefined;
+    return { url, extraHeaders, fileType, filename };
+>>>>>>> chat263/M3U8Quicker/master
   } catch (error) {
     console.debug("[m3u8quicker] failed to parse deep link", deepLink, error);
     return null;
@@ -1595,8 +1676,14 @@ function parseNewLiveRecordDraft(
     }
 
     const extraHeaders = parsed.searchParams.get("extra_headers")?.trim() || undefined;
+<<<<<<< HEAD
     const rawFilename = parsed.searchParams.get("filename")?.trim() || undefined;
     return { url, extraHeaders, filename: rawFilename };
+=======
+    const title = parsed.searchParams.get("title");
+    const filename = title ? normalizeDownloadFilename(title) || undefined : undefined;
+    return { url, extraHeaders, filename };
+>>>>>>> chat263/M3U8Quicker/master
   } catch (error) {
     console.debug("[m3u8quicker] failed to parse live record deep link", deepLink, error);
     return null;
@@ -1642,35 +1729,31 @@ async function ensureFfmpegReadyForPreview(
     // fall through to prompt
   }
 
-  return await new Promise<boolean>((resolve) => {
-    Modal.confirm({
-      title: t("ffmpegRequiredForPreviews"),
-      content: (
-        <Typography.Paragraph style={{ marginBottom: 0 }}>
-          {t("videoPreviewsUseFfmpegToExtractFramesEnableAndConfigure")}</Typography.Paragraph>
-      ),
-      okText: t("goToSettings"),
-      cancelText: t("cancel"),
-      onOk: () => {
-        onOpenFfmpegSettings();
-        resolve(false);
-      },
-      onCancel: () => resolve(false),
-    });
-  });
+  // 深链预览的主窗口可能隐藏，使用原生对话框让提示仍然可见。
+  const openSettings = await showPreviewDialog(
+    t("videoPreviewsUseFfmpegToExtractFramesEnableAndConfigure"),
+    t("ffmpegRequiredForPreviews"),
+    [t("goToSettings"), t("cancel")]
+  );
+  if (openSettings) {
+    await bringMainWindowToFront();
+    onOpenFfmpegSettings();
+  }
+  return false;
 }
 
-async function openPreviewWindowFromDeepLink(
+async function openPreviewWindow(
   url: string,
   extraHeaders: string | undefined,
   title: string | undefined,
-  onOpenFfmpegSettings: () => void
+  onOpenFfmpegSettings: () => void,
+  localPath?: string
 ): Promise<void> {
-  if (!(await ensureFfmpegReadyForPreview(onOpenFfmpegSettings))) {
-    return;
-  }
   let token: string | null = null;
   try {
+    if (!(await ensureFfmpegReadyForPreview(onOpenFfmpegSettings))) {
+      return;
+    }
     const isInlineDashJson = url.trim().startsWith("{");
     const sessionUrl = isInlineDashJson ? "inline-dash-json" : url;
     const sourceKind = isInlineDashJson ? "inline_dash_json" : undefined;
@@ -1679,7 +1762,8 @@ async function openPreviewWindowFromDeepLink(
       sessionUrl,
       extraHeaders,
       sourceKind,
-      sourceText
+      sourceText,
+      localPath
     );
     token = session.token;
     const previewParams = new URLSearchParams({
@@ -1703,21 +1787,38 @@ async function openPreviewWindowFromDeepLink(
     });
 
     previewWindow.once("tauri://created", () => {
-      void previewWindow.setFocus();
+      // 主窗口可能仍被浏览器遮挡，直接显示并激活新建的预览窗口。
+      void (async () => {
+        await previewWindow.show();
+        if (await previewWindow.isMinimized()) {
+          await previewWindow.unminimize();
+        }
+        await previewWindow.setFocus();
+      })().catch((error) => {
+        console.error("Failed to bring preview window to front", error);
+      });
     });
     previewWindow.once("tauri://error", (event) => {
       console.error("Failed to create preview window", event);
       if (token) {
         void closePreviewSession(token);
       }
-      message.error(t("failedToOpenPreviewWindow"));
+      void showPreviewError(t("failedToOpenPreviewWindow"));
     });
   } catch (error) {
     if (token) {
       void closePreviewSession(token);
     }
     console.error("[m3u8quicker] failed to open preview window", error);
-    message.error(t("failedToGeneratePreview", { value0: formatPreviewError(error) }));
+    await showPreviewError(t("failedToGeneratePreview", { value0: formatPreviewError(error) }));
+  }
+}
+
+async function showPreviewError(error: string): Promise<void> {
+  try {
+    await showPreviewDialog(error, t("previewFailed"));
+  } catch (dialogError) {
+    console.error("[m3u8quicker] failed to show preview error", dialogError);
   }
 }
 
@@ -1779,6 +1880,19 @@ function formatPreviewError(error: unknown): string {
   return String(error);
 }
 
+function parseBatchTransferLink(deepLink: string): { id: string; secret: string } | null {
+  try {
+    const parsed = new URL(deepLink);
+    const action = (parsed.hostname || parsed.pathname.replace(/^\/+/, "")).toLowerCase();
+    if (parsed.protocol !== "m3u8quicker:" || action !== "batch-transfer") return null;
+    const id = parsed.searchParams.get("id") || "";
+    const secret = parsed.searchParams.get("secret") || "";
+    return /^[a-f0-9]{32}$/.test(id) && /^[a-f0-9]{64}$/.test(secret) ? { id, secret } : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseBatchDownloadDraft(
   deepLink: string
 ): Omit<BatchDownloadDraft, "nonce"> | null {
@@ -1799,6 +1913,7 @@ function parseBatchDownloadDraft(
     const fileTypes = rawFileTypes
       ? rawFileTypes.split(/\r?\n/).map((value) => parseFileType(value))
       : undefined;
+<<<<<<< HEAD
     const rawFilenames = parsed.searchParams.get("filenames");
     const filenames = rawFilenames
       ? rawFilenames
@@ -1806,6 +1921,22 @@ function parseBatchDownloadDraft(
           .map((value) => value.trim())
           .filter(Boolean)
       : undefined;
+=======
+    let filenames: Array<string | undefined> | undefined;
+    const rawTitles = parsed.searchParams.get("titles");
+    if (rawTitles) {
+      try {
+        const titles: unknown = JSON.parse(rawTitles);
+        if (Array.isArray(titles)) {
+          filenames = titles.map((title) =>
+            typeof title === "string" ? normalizeDownloadFilename(title) || undefined : undefined
+          );
+        }
+      } catch {
+        // Invalid optional titles must not prevent the URLs from opening.
+      }
+    }
+>>>>>>> chat263/M3U8Quicker/master
     return { rawInput, extraHeaders, fileTypes, filenames };
   } catch (error) {
     console.debug("[m3u8quicker] failed to parse batch deep link", deepLink, error);

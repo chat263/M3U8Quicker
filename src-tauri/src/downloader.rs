@@ -1,3 +1,5 @@
+pub mod direct;
+
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::io::ErrorKind;
@@ -315,9 +317,22 @@ fn reserve_rate_limit_delay(
 pub fn build_http_client(
     proxy_url: Option<&str>,
     user_agent: &str,
+    ignore_https_certificate_errors: bool,
 ) -> Result<reqwest::Client, AppError> {
+    http_client_builder(proxy_url, user_agent, ignore_https_certificate_errors)?
+        .build()
+        .map_err(|e| AppError::Internal(format!("Failed to create HTTP client: {}", e)))
+}
+
+fn http_client_builder(
+    proxy_url: Option<&str>,
+    user_agent: &str,
+    ignore_https_certificate_errors: bool,
+) -> Result<reqwest::ClientBuilder, AppError> {
     let mut builder = reqwest::Client::builder()
         .user_agent(user_agent)
+        .danger_accept_invalid_certs(ignore_https_certificate_errors)
+        .danger_accept_invalid_hostnames(ignore_https_certificate_errors)
         .timeout(segment_timeout());
 
     if let Some(url) = proxy_url.filter(|value| !value.trim().is_empty()) {
@@ -330,9 +345,7 @@ pub fn build_http_client(
         builder = builder.no_proxy();
     }
 
-    builder
-        .build()
-        .map_err(|e| AppError::Internal(format!("Failed to create HTTP client: {}", e)))
+    Ok(builder)
 }
 
 fn build_request(client: &reqwest::Client, url: &str) -> reqwest::RequestBuilder {
@@ -2857,6 +2870,7 @@ fn calculate_percentage(completed_segments: usize, total_segments: usize) -> f64
 
 fn snapshot_to_event(snapshot: &RuntimeProgressSnapshot) -> DownloadProgressEvent {
     DownloadProgressEvent {
+        direct_info: None,
         id: snapshot.id.clone(),
         status: snapshot.status.clone(),
         group: download_group_for_status(&snapshot.status),
@@ -5216,6 +5230,10 @@ async fn merge_files(files: &[PathBuf], output_path: &Path) -> Result<(), AppErr
     output_file.flush().await?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "downloader/tls_tests.rs"]
+pub(crate) mod tls_tests;
 
 #[cfg(test)]
 mod tests {
