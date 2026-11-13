@@ -41,6 +41,7 @@
       preview: "预览", copy: "复制", copied: "已复制", failed: "失败",
       download: "下载", record: "录播", quality: "{name} 清晰度",
       selectVideo: "选择 {name}", defaultQuality: "默认清晰度", qualityNumber: "清晰度 {number}",
+      pageTitleLabel: "页面：{title}",
     },
     en: {
       title: "Select videos to download", selectAll: "Select all", deselect: "Deselect", clear: "Clear",
@@ -52,6 +53,7 @@
       preview: "Preview", copy: "Copy", copied: "Copied", failed: "Failed",
       download: "Download", record: "Record", quality: "{name} quality",
       selectVideo: "Select {name}", defaultQuality: "Default quality", qualityNumber: "Quality {number}",
+      pageTitleLabel: "Page: {title}",
     },
   };
 
@@ -1120,6 +1122,22 @@
       });
 
       content.appendChild(name);
+
+      const pageTitle = getTargetTitle(item);
+      if (pageTitle && pageTitle !== item.displayName) {
+        const pageTitleLabel = document.createElement("div");
+        languageBindings.push(() => { pageTitleLabel.textContent = t("pageTitleLabel", { title: pageTitle }); });
+        pageTitleLabel.textContent = t("pageTitleLabel", { title: pageTitle });
+        pageTitleLabel.title = pageTitle;
+        pageTitleLabel.style.marginTop = "2px";
+        pageTitleLabel.style.fontSize = "12px";
+        pageTitleLabel.style.fontWeight = "400";
+        pageTitleLabel.style.color = "#5b718b";
+        pageTitleLabel.style.whiteSpace = "nowrap";
+        pageTitleLabel.style.overflow = "hidden";
+        pageTitleLabel.style.textOverflow = "ellipsis";
+        content.appendChild(pageTitleLabel);
+      }
 
       if (Array.isArray(item.qualityOptions) && item.qualityOptions.length > 1) {
         const qualitySelect = document.createElement("select");
